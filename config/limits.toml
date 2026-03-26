@@ -1,0 +1,5 @@
+max_archive_size = 268435456
+max_entry_uncompressed_size = 52428800
+max_total_uncompressed_size = 134217728
+max_entries = 2048
+max_compression_ratio = 100.0

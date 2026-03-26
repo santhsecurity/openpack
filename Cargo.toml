@@ -1,0 +1,30 @@
+[package]
+exclude = ["target/"]
+name = "openpack"
+version = "0.1.1"
+edition = "2021"
+rust-version = "1.70"
+description = "Safe archive-reader for ZIP-derived formats (ZIP, CRX, JAR, APK, IPA) with BOM-safe checks."
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/santhsecurity/openpack"
+authors = ["Corum Collective LLC <engineering@corumcollective.com>"]
+keywords = ["zip", "archive", "waf", "security", "manifest"]
+categories = ["compression", "filesystem", "parser-implementations"]
+
+[dependencies]
+zip = "2"
+memmap2 = "0.9"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = ["zip"]
+zip = []
+apk = []
+crx = []
+ipa = []
