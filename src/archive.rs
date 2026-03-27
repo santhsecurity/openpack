@@ -876,6 +876,223 @@ mod tests {
     }
 
     #[test]
+    fn strict_limits_are_tighter_than_default() {
+        let strict = Limits::strict();
+        let default = Limits::default();
+        assert!(strict.max_archive_size < default.max_archive_size);
+        assert!(strict.max_entry_uncompressed_size < default.max_entry_uncompressed_size);
+        assert!(strict.max_total_uncompressed_size < default.max_total_uncompressed_size);
+        assert!(strict.max_entries < default.max_entries);
+        assert!(strict.max_compression_ratio < default.max_compression_ratio);
+    }
+
+    #[test]
+    fn permissive_limits_are_looser_than_default() {
+        let permissive = Limits::permissive();
+        let default = Limits::default();
+        assert!(permissive.max_archive_size > default.max_archive_size);
+        assert!(permissive.max_entry_uncompressed_size > default.max_entry_uncompressed_size);
+        assert!(permissive.max_total_uncompressed_size > default.max_total_uncompressed_size);
+        assert!(permissive.max_entries > default.max_entries);
+        assert!(permissive.max_compression_ratio > default.max_compression_ratio);
+    }
+
+    #[test]
+    fn from_toml_file_missing_path_returns_io_error() {
+        let missing = Scratch::new("missing-config.toml");
+        assert!(matches!(
+            Limits::from_toml_file(missing.path.as_path()),
+            Err(OpenPackError::Io(_))
+        ));
+    }
+
+    #[test]
+    fn from_toml_file_invalid_data_returns_config_error() {
+        let file = Scratch::new("bad-config.toml");
+        write_file(file.path.as_path(), b"max_entries = \"many\"");
+        assert!(matches!(
+            Limits::from_toml_file(file.path.as_path()),
+            Err(OpenPackError::InvalidConfig(_))
+        ));
+    }
+
+    #[test]
+    fn format_display_uses_lowercase_tokens() {
+        assert_eq!(ArchiveFormat::Zip.to_string(), "zip");
+        assert_eq!(ArchiveFormat::Jar.to_string(), "jar");
+        assert_eq!(ArchiveFormat::Apk.to_string(), "apk");
+        assert_eq!(ArchiveFormat::Ipa.to_string(), "ipa");
+        assert_eq!(ArchiveFormat::Crx.to_string(), "crx");
+    }
+
+    #[test]
+    fn contains_rejects_empty_entry_name() {
+        let archive = Scratch::new("contains-empty-name.zip");
+        write_zip(
+            &archive.path,
+            &[("present.txt", b"value", CompressionMethod::Stored)],
+        );
+        let pack = OpenPack::open_default(&archive.path).expect("open");
+        assert!(matches!(
+            pack.contains(""),
+            Err(OpenPackError::InvalidArchive(_))
+        ));
+    }
+
+    #[test]
+    fn read_entry_rejects_empty_entry_name() {
+        let archive = Scratch::new("read-empty-name.zip");
+        write_zip(
+            &archive.path,
+            &[("present.txt", b"value", CompressionMethod::Stored)],
+        );
+        let pack = OpenPack::open_default(&archive.path).expect("open");
+        assert!(matches!(
+            pack.read_entry(""),
+            Err(OpenPackError::InvalidArchive(_))
+        ));
+    }
+
+    #[test]
+    fn supports_unicode_entry_names_and_contents() {
+        let archive = Scratch::new("unicode.zip");
+        let name = "unicodé/こんにちは.txt";
+        let payload = "Grüße 🌍".as_bytes();
+        write_zip(&archive.path, &[(name, payload, CompressionMethod::Stored)]);
+        let pack = OpenPack::open_default(&archive.path).expect("open");
+        assert!(pack.contains(name).expect("contains unicode name"));
+        assert_eq!(pack.read_entry(name).expect("read unicode payload"), payload);
+    }
+
+    #[test]
+    fn supports_null_bytes_in_payload() {
+        let archive = Scratch::new("null-bytes.zip");
+        let payload = b"\0\0abc\0def\0";
+        write_zip(
+            &archive.path,
+            &[("bin.dat", payload, CompressionMethod::Stored)],
+        );
+        let pack = OpenPack::open_default(&archive.path).expect("open");
+        assert_eq!(pack.read_entry("bin.dat").expect("read payload"), payload);
+    }
+
+    #[test]
+    fn handles_large_entry_payload_within_limits() {
+        let archive = Scratch::new("huge-entry.zip");
+        let payload = vec![b'x'; 2 * 1024 * 1024];
+        write_zip(
+            &archive.path,
+            &[("huge.bin", payload.as_slice(), CompressionMethod::Stored)],
+        );
+        let limits = Limits {
+            max_entry_uncompressed_size: 3 * 1024 * 1024,
+            max_total_uncompressed_size: 3 * 1024 * 1024,
+            ..Limits::default()
+        };
+        let pack = OpenPack::open(&archive.path, limits).expect("open");
+        let data = pack.read_entry("huge.bin").expect("read large entry");
+        assert_eq!(data.len(), payload.len());
+        assert_eq!(data[0], b'x');
+        assert_eq!(data[data.len() - 1], b'x');
+    }
+
+    #[test]
+    fn encoded_traversal_names_are_rejected() {
+        let archive = Scratch::new("encoded-traversal.zip");
+        write_zip(
+            &archive.path,
+            &[("%2e%2e/evil.txt", b"bad", CompressionMethod::Stored)],
+        );
+        let pack = OpenPack::open_default(&archive.path).expect("open");
+        assert!(matches!(pack.entries(), Err(OpenPackError::ZipSlip(_))));
+    }
+
+    #[test]
+    fn doubly_encoded_traversal_names_are_rejected() {
+        let archive = Scratch::new("double-encoded-traversal.zip");
+        write_zip(
+            &archive.path,
+            &[("%252e%252e/evil.txt", b"bad", CompressionMethod::Stored)],
+        );
+        let pack = OpenPack::open_default(&archive.path).expect("open");
+        assert!(matches!(pack.entries(), Err(OpenPackError::ZipSlip(_))));
+    }
+
+    #[test]
+    fn concurrent_reads_are_consistent() {
+        let archive = Scratch::new("concurrent-read.zip");
+        write_zip(
+            &archive.path,
+            &[("shared.txt", b"concurrent-value", CompressionMethod::Stored)],
+        );
+        let pack = Arc::new(OpenPack::open_default(&archive.path).expect("open"));
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let pack = Arc::clone(&pack);
+            handles.push(std::thread::spawn(move || {
+                let data = pack.read_entry("shared.txt").expect("read entry");
+                let contains = pack.contains("shared.txt").expect("contains entry");
+                let listed = pack.entries().expect("entries");
+                (data, contains, listed.len())
+            }));
+        }
+        for handle in handles {
+            let (data, contains, len) = handle.join().expect("thread join");
+            assert_eq!(data, b"concurrent-value");
+            assert!(contains);
+            assert_eq!(len, 1);
+        }
+    }
+
+    #[test]
+    fn concurrent_missing_entry_checks_return_false() {
+        let archive = Scratch::new("concurrent-miss.zip");
+        write_zip(
+            &archive.path,
+            &[("present.txt", b"v", CompressionMethod::Stored)],
+        );
+        let pack = Arc::new(OpenPack::open_default(&archive.path).expect("open"));
+        let mut handles = Vec::new();
+        for _ in 0..6 {
+            let pack = Arc::clone(&pack);
+            handles.push(std::thread::spawn(move || {
+                pack.contains("absent.txt").expect("contains missing")
+            }));
+        }
+        for handle in handles {
+            assert!(!handle.join().expect("thread join"));
+        }
+    }
+
+    #[test]
+    fn open_and_read_from_unicode_path() {
+        let archive = Scratch::new("unicodé-路径.zip");
+        write_zip(
+            &archive.path,
+            &[("file.txt", b"ok", CompressionMethod::Stored)],
+        );
+        let pack = OpenPack::open_default(&archive.path).expect("open");
+        assert_eq!(pack.path(), archive.path);
+        assert_eq!(pack.read_entry("file.txt").unwrap(), b"ok");
+    }
+
+    #[test]
+    fn map_and_entries_work_repeatedly_after_large_read() {
+        let archive = Scratch::new("repeat-large.zip");
+        let payload = vec![b'r'; 1024 * 1024];
+        write_zip(
+            &archive.path,
+            &[("repeat.bin", payload.as_slice(), CompressionMethod::Stored)],
+        );
+        let pack = OpenPack::open_default(&archive.path).expect("open");
+        let data = pack.read_entry("repeat.bin").expect("read");
+        assert_eq!(data.len(), payload.len());
+        assert!(!pack.mmap().is_empty());
+        assert_eq!(pack.entries().expect("entries").len(), 1);
+        assert_eq!(pack.entries().expect("entries again").len(), 1);
+    }
+
+    #[test]
     fn nested_archives_can_be_read_via_inner_entry() {
         let inner = Scratch::new("inner.zip");
         write_zip(
