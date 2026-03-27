@@ -166,6 +166,13 @@ impl OpenPack {
             )));
         }
 
+        if crc32fast::hash(&data) != entry.crc {
+            return Err(OpenPackError::InvalidArchive(format!(
+                "entry '{}' failed CRC32 validation",
+                name
+            )));
+        }
+
         Ok(data)
     }
 

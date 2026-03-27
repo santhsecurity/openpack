@@ -102,6 +102,7 @@ pub(crate) fn reject_duplicate_entry_name(
 }
 
 pub(crate) fn entry_meta(file: &mut ZipFile<'_>) -> Result<ArchiveEntry, OpenPackError> {
+    reject_symlink_entry(file)?;
     Ok(ArchiveEntry {
         name: file.name().to_string(),
         compressed_size: file.compressed_size(),
@@ -109,6 +110,20 @@ pub(crate) fn entry_meta(file: &mut ZipFile<'_>) -> Result<ArchiveEntry, OpenPac
         crc: file.crc32(),
         is_dir: file.is_dir(),
     })
+}
+
+pub(crate) fn reject_symlink_entry(file: &ZipFile<'_>) -> Result<(), OpenPackError> {
+    const S_IFMT: u32 = 0o170000;
+    const S_IFLNK: u32 = 0o120000;
+
+    if file.unix_mode().is_some_and(|mode| mode & S_IFMT == S_IFLNK) {
+        return Err(OpenPackError::InvalidArchive(format!(
+            "symlink entry `{}` is not supported",
+            file.name()
+        )));
+    }
+
+    Ok(())
 }
 
 fn fully_percent_decode(value: &str) -> String {
