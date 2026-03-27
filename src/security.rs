@@ -116,7 +116,10 @@ pub(crate) fn reject_symlink_entry(file: &ZipFile<'_>) -> Result<(), OpenPackErr
     const S_IFMT: u32 = 0o170000;
     const S_IFLNK: u32 = 0o120000;
 
-    if file.unix_mode().is_some_and(|mode| mode & S_IFMT == S_IFLNK) {
+    if file
+        .unix_mode()
+        .is_some_and(|mode| mode & S_IFMT == S_IFLNK)
+    {
         return Err(OpenPackError::InvalidArchive(format!(
             "symlink entry `{}` is not supported",
             file.name()
@@ -129,7 +132,9 @@ pub(crate) fn reject_symlink_entry(file: &ZipFile<'_>) -> Result<(), OpenPackErr
 fn fully_percent_decode(value: &str) -> String {
     let mut current = value.to_string();
     for _ in 0..4 {
-        let decoded = percent_decode_str(&current).decode_utf8_lossy().into_owned();
+        let decoded = percent_decode_str(&current)
+            .decode_utf8_lossy()
+            .into_owned();
         if decoded == current {
             break;
         }
