@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::{Component, Path};
 
+use percent_encoding::percent_decode_str;
 use zip::read::ZipFile;
 
 use crate::types::{ArchiveEntry, Limits, OpenPackError};
@@ -63,21 +64,23 @@ pub(crate) fn validate_entry_name(name: &str) -> Result<(), OpenPackError> {
         return Err(OpenPackError::InvalidArchive("empty entry name".into()));
     }
 
-    if name.starts_with('/') {
+    let decoded = fully_percent_decode(name);
+
+    if name.starts_with('/') || decoded.starts_with('/') {
         return Err(OpenPackError::InvalidArchive("absolute path entry".into()));
     }
 
-    if name.contains('\\') {
+    if name.contains('\\') || decoded.contains('\\') {
         return Err(OpenPackError::InvalidArchive(
             "backslash in entry name".into(),
         ));
     }
 
-    if name.contains("../") || name.ends_with("/..") || name == ".." {
+    if contains_parent_traversal(name) || contains_parent_traversal(&decoded) {
         return Err(OpenPackError::ZipSlip(name.to_string()));
     }
 
-    if Path::new(name)
+    if Path::new(&decoded)
         .components()
         .any(|component| matches!(component, Component::ParentDir))
     {
@@ -106,4 +109,20 @@ pub(crate) fn entry_meta(file: &mut ZipFile<'_>) -> Result<ArchiveEntry, OpenPac
         crc: file.crc32(),
         is_dir: file.is_dir(),
     })
+}
+
+fn fully_percent_decode(value: &str) -> String {
+    let mut current = value.to_string();
+    for _ in 0..4 {
+        let decoded = percent_decode_str(&current).decode_utf8_lossy().into_owned();
+        if decoded == current {
+            break;
+        }
+        current = decoded;
+    }
+    current
+}
+
+fn contains_parent_traversal(value: &str) -> bool {
+    value.contains("../") || value.ends_with("/..") || value == ".."
 }
