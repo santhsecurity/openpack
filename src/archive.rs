@@ -1093,6 +1093,64 @@ mod tests {
     }
 
     #[test]
+    fn empty_file_fails_parsing_gracefully() {
+        let archive = Scratch::new("empty-bytes.zip");
+        write_file(&archive.path, b"");
+        let pack = OpenPack::open_default(&archive.path).expect("open file path");
+        assert!(matches!(pack.entries(), Err(OpenPackError::Zip(_))));
+    }
+
+    #[test]
+    fn unicode_missing_entry_returns_false() {
+        let archive = Scratch::new("unicode-missing.zip");
+        write_zip(&archive.path, &[("a.txt", b"a", CompressionMethod::Stored)]);
+        let pack = OpenPack::open_default(&archive.path).expect("open");
+        assert!(!pack.contains("不存在.txt").expect("contains missing unicode"));
+    }
+
+    #[test]
+    fn crx_magic_without_extension_is_detected_or_blocked() {
+        let payload = Scratch::new("raw-payload.zip");
+        write_zip(
+            &payload.path,
+            &[("a.txt", b"hello", CompressionMethod::Stored)],
+        );
+        let bytes = std::fs::read(&payload.path).expect("payload bytes");
+        let raw = Scratch::new("unknown.bin");
+        write_file(&raw.path, &crx_payload(&bytes));
+
+        #[cfg(feature = "crx")]
+        {
+            let pack = OpenPack::open_default(&raw.path).expect("open crx magic");
+            assert_eq!(pack.format(), ArchiveFormat::Crx);
+        }
+        #[cfg(not(feature = "crx"))]
+        {
+            assert!(matches!(
+                OpenPack::open_default(&raw.path),
+                Err(OpenPackError::Unsupported)
+            ));
+        }
+    }
+
+    #[test]
+    fn limits_can_roundtrip_through_toml() {
+        let original = Limits::strict();
+        let raw = toml::to_string(&original).expect("serialize");
+        let parsed = Limits::from_toml(&raw).expect("parse");
+        assert_eq!(parsed.max_archive_size, original.max_archive_size);
+        assert_eq!(
+            parsed.max_entry_uncompressed_size,
+            original.max_entry_uncompressed_size
+        );
+        assert_eq!(
+            parsed.max_total_uncompressed_size,
+            original.max_total_uncompressed_size
+        );
+        assert_eq!(parsed.max_entries, original.max_entries);
+    }
+
+    #[test]
     fn nested_archives_can_be_read_via_inner_entry() {
         let inner = Scratch::new("inner.zip");
         write_zip(
