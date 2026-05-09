@@ -961,7 +961,10 @@ mod tests {
         write_zip(&archive.path, &[(name, payload, CompressionMethod::Stored)]);
         let pack = OpenPack::open_default(&archive.path).expect("open");
         assert!(pack.contains(name).expect("contains unicode name"));
-        assert_eq!(pack.read_entry(name).expect("read unicode payload"), payload);
+        assert_eq!(
+            pack.read_entry(name).expect("read unicode payload"),
+            payload
+        );
     }
 
     #[test]
@@ -1105,7 +1108,9 @@ mod tests {
         let archive = Scratch::new("unicode-missing.zip");
         write_zip(&archive.path, &[("a.txt", b"a", CompressionMethod::Stored)]);
         let pack = OpenPack::open_default(&archive.path).expect("open");
-        assert!(!pack.contains("不存在.txt").expect("contains missing unicode"));
+        assert!(!pack
+            .contains("不存在.txt")
+            .expect("contains missing unicode"));
     }
 
     #[test]
